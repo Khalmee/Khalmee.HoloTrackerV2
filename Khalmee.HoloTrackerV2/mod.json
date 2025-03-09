@@ -1,0 +1,20 @@
+{
+	"Name": "Khalmee.HoloTrackerV2",
+	"Description": "Tracks your decoy's position and lifetime remaining.",
+	"LoadPriority": 2,
+	"RequiredOnClient": false,
+	"Version": "1.0.0",
+	
+	"Scripts": [
+		{
+			"Path": "HoloTrackerV2.nut",
+			"RunOn": "CLIENT",
+			"ClientCallback": {
+				"Before": "HoloTrackerV2Init"
+			},
+		}
+	],
+	"Localisation": [
+		"resource/HoloTrackerV2_localisation_%language%.txt"
+	]
+}
