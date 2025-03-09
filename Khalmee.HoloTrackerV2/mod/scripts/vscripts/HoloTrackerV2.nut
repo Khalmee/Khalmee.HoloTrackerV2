@@ -55,8 +55,8 @@ void function DecoyTrackingThread(entity decoy){
 	
 	activeDecoys.append(decoy)
 	//Logger.Info("Decoy added to array")
-	Logger.Info("ADDED: " + activeDecoys.len().tostring())
-	Logger.Info(decoy.GetProjectileCreationTime().tostring())
+	//Logger.Info("ADDED: " + activeDecoys.len().tostring()) //for debugging
+	//Logger.Info(decoy.GetProjectileCreationTime().tostring()) //bad idea
 	
 	var rui = CreateCockpitRui( $"ui/overhead_icon_evac.rpak", MINIMAP_Z_BASE + 200 )
 	RuiSetImage( rui, "icon", $"rui/menu/boosts/boost_icon_holopilot" )
@@ -79,7 +79,7 @@ void function DecoyTrackingThread(entity decoy){
 			
 			activeDecoys.fastremovebyvalue(decoy)
 			//Logger.Info("Decoy removed from array")
-			Logger.Info("REMOVED: " + activeDecoys.len().tostring())
+			//Logger.Info("REMOVED: " + activeDecoys.len().tostring())
 		}
 	)
 	
