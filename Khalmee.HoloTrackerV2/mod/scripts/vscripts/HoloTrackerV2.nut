@@ -1,16 +1,18 @@
 global function HoloTrackerV2Init
 
 
-const float MAX_HOLOPILOT_DURATION = 10.0
-array<entity> activeDecoys
-
-
 struct decoyData
 {
 	int eHandle
 	float creationTime
 	bool expired = false
 }
+
+
+const float MAX_HOLOPILOT_DURATION = 10.0
+const float HOLOPILOT_DISSOLVE_TIME = 5.0
+array<entity> activeDecoys
+array<decoyData> trackedDecoyData
 
 
 void function HoloTrackerV2Init()
@@ -29,8 +31,10 @@ void function DecoyScanningThread()
 	while(true)
 	{
 		WaitFrame()
-		if(!(!IsAlive(GetLocalClientPlayer()) || IsSpectating() || IsWatchingKillReplay()))
+		if( IsAlive(GetLocalClientPlayer()) && !IsSpectating() && !IsWatchingKillReplay() )
 		{
+			CleanUpExpiredDecoyData()
+			
 			allDecoys = GetPlayerDecoyArray()
 			
 			foreach(d in allDecoys)
@@ -59,55 +63,89 @@ void function DecoyTrackingThread(entity decoy){
 	//Logger.Info("Thread began")
 	
 	//decoy.EndSignal( "OnDeath" )
-	//decoy.EndSignal( "OnDestroy" )
+	decoy.EndSignal( "OnDestroy" )
 	
+	//Set up fresh decoy data
+	decoyData localTrackedDecoy
+	localTrackedDecoy.eHandle = decoy.Dev_GetEncodedEHandle()
+	localTrackedDecoy.creationTime = Time()
+	localTrackedDecoy.expired = false
+	
+	bool shouldSaveDecoyData = true
+	
+	foreach( d in trackedDecoyData )
+	{
+		if( d.eHandle == localTrackedDecoy.eHandle )
+		{
+			localTrackedDecoy = d //Copy decoy data if the decoy was tracked earlier
+			Logger.Info( "Existing decoy detected!" )
+			shouldSaveDecoyData = false
+			break
+		}
+	}
+	
+	//Label decoy ENTITY as tracked
 	activeDecoys.append(decoy)
 	//Logger.Info("Decoy added to array")
 	Logger.Info("ADDED: " + activeDecoys.len().tostring())
 	Logger.Info("ID: " + decoy.GetEntIndex().tostring() + " EH:" + decoy.Dev_GetEncodedEHandle().tostring())
 	
-	var rui = CreateCockpitRui( $"ui/overhead_icon_evac.rpak", MINIMAP_Z_BASE + 200 )
-	RuiSetImage( rui, "icon", $"rui/menu/boosts/boost_icon_holopilot" )
-	RuiSetBool( rui, "isVisible", true )
-	RuiTrackFloat3( rui, "pos", decoy, RUI_TRACK_OVERHEAD_FOLLOW)
-	RuiSetString( rui, "statusText", "#HOLOTRACKER_TIME_REMAINING" )
-	RuiSetGameTime( rui, "finishTime", Time()+MAX_HOLOPILOT_DURATION )
+	var rui = null
+	
+	if( !localTrackedDecoy.expired )
+	{
+		//Set up RUI
+		rui = CreateCockpitRui( $"ui/overhead_icon_evac.rpak", MINIMAP_Z_BASE + 200 )
+		RuiSetImage( rui, "icon", $"rui/menu/boosts/boost_icon_holopilot" )
+		RuiSetBool( rui, "isVisible", true )
+		RuiTrackFloat3( rui, "pos", decoy, RUI_TRACK_OVERHEAD_FOLLOW)
+		RuiSetString( rui, "statusText", "#HOLOTRACKER_TIME_REMAINING" )
+		RuiSetGameTime( rui, "finishTime", localTrackedDecoy.creationTime+MAX_HOLOPILOT_DURATION )
+	}
 	
 	OnThreadEnd(
-		function() : ( decoy, rui )
+		function() : ( decoy, rui, shouldSaveDecoyData, localTrackedDecoy )
 		{
-			//while(decoy != null){ WaitFrame() } //wait till the decoy disappears (impossible)
-			
+			//Remove RUI
 			if(rui != null)
 			{
 				RuiDestroyIfAlive(rui)
-				//rui = null //that's how it's done in vanilla, no idea why, it's illegal
 				//Logger.Info("Attempted RUI destruction in OnThreadEnd")
 			}
 			
+			//Decoy entity shouldn't exist by now, remove from entity array
 			activeDecoys.fastremovebyvalue(decoy)
 			//Logger.Info("Decoy removed from array")
 			Logger.Info("REMOVED: " + activeDecoys.len().tostring())
+			
+			//Save decoy data
+			if( shouldSaveDecoyData && localTrackedDecoy.creationTime + MAX_HOLOPILOT_DURATION + HOLOPILOT_DISSOLVE_TIME >= Time() )
+			{
+				trackedDecoyData.append( localTrackedDecoy )
+			}
+			
+			Logger.Info( "DATA: " + trackedDecoyData.len().tostring() )
 		}
 	)
 	
-	waitthread DecoyWaitThread(decoy)
+	waitthread DecoyWaitThread( decoy, localTrackedDecoy.creationTime )
 	
+	//Remove RUI
 	if(rui != null)
 	{
 		RuiDestroyIfAlive(rui)
 		//Logger.Info("Attempted RUI destruction after waitthread")
 	}
 	
-	wait 5 //leave time for the decoy to dissolve
+	localTrackedDecoy.expired = true //Marking decoy as expired to not create a fresh RUI if it gets detected again
 	
-	//Logger.Info("Thread reached the end") //Should never happen
+	wait HOLOPILOT_DISSOLVE_TIME //leave some time for the decoy to dissolve
 }
 
 
-void function DecoyWaitThread(entity decoy)
+void function DecoyWaitThread(entity decoy, float creationTime)
 {
-	//The RUI must be destroyed after the decoy dies, or when its lifetime runs out.
+	//The RUI must be destroyed either after the decoy dies, or when its lifetime runs out.
 	decoy.EndSignal( "OnDeath" )
 	
 	OnThreadEnd(
@@ -117,11 +155,23 @@ void function DecoyWaitThread(entity decoy)
 		}
 	)
 	
-	float threadEndTime = Time() + MAX_HOLOPILOT_DURATION
 	for(;;){
 		WaitFrame()
-		if(Time() > threadEndTime)
+		if(Time() >= creationTime + MAX_HOLOPILOT_DURATION)
 			break
+	}
+}
+
+
+void function CleanUpExpiredDecoyData()
+{
+	foreach( d in trackedDecoyData )
+	{
+		if( d.creationTime + MAX_HOLOPILOT_DURATION + HOLOPILOT_DISSOLVE_TIME < Time() )
+		{
+			trackedDecoyData.fastremovebyvalue( d )
+			Logger.Info( "Attempted decoy data cleanup, remaining:" + trackedDecoyData.len().tostring() )
+		}
 	}
 }
 
@@ -178,3 +228,5 @@ foreach td in trackedDecoys
 //one track for fresh decoy, one for existing
 //If destroy gets called on entering kill replay, could make it save the decoy if the timeout hasn't happened
 //So, reenable the OnDestroy signal, and have an if(Time < 15) save the struct
+//Can the entity be removed from the array upon destruction?
+//Probably yes actually, if its eHandle is saved
